@@ -1,13 +1,12 @@
-name: 🧪 Build Offline Godot Web View IPA
+name: 🧪 Build Optimized Offline Master Editor
 on:
   workflow_dispatch:
 
 jobs:
-  build-offline-ipa:
+  build-optimized-editor:
     runs-on: macos-15
-    name: Godot Offline Editor (iOS Wrapper)
     steps:
-      - name: Setup Workspace
+      - name: Setup Directory Structure
         run: |
           mkdir -p build_stage/GodotWeb.app/godot_web
 
@@ -17,7 +16,7 @@ jobs:
           BASE="https://editor.godotengine.org/releases/4.3.stable"
           curl -L -fO "$BASE/godot.editor.html"
           curl -L -fO "$BASE/godot.editor.js"
-          curl -L -fO "$BASE/godot.editor.wasm"
+          curl -fO "$BASE/godot.editor.wasm"
 
       - name: Generate Swift Source
         run: |
@@ -78,33 +77,28 @@ jobs:
               <string>org.godotengine.offline</string>
               <key>CFBundleName</key>
               <string>GodotWeb</string>
-              <key>CFBundleVersion</key>
-              <string>1.0</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
+              <key>UIFileSharingEnabled</key>
+              <true/>
           </dict>
           </plist>
           EOF
 
       - name: Compile and Package
         run: |
+          # 1. Compile with the exact name referenced in CFBundleExecutable
           SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
-          
-          # 1. Compile directly into the bundle
           swiftc -target arm64-apple-ios15.0 -sdk "$SDK_PATH" -O -parse-as-library \
             build_stage/App.swift -o build_stage/GodotWeb.app/GodotWeb
-          
-          # 2. Grant execution permissions
+            
+          # 2. Critical: Set permissions so iOS kernel can map the binary
           chmod +x build_stage/GodotWeb.app/GodotWeb
           
-          # 3. Create strictly compliant Payload structure
+          # 3. Proper Packaging: Payload/App.app/Binary
           mkdir -p Payload
-          cp -r build_stage/GodotWeb.app Payload/
+          mv build_stage/GodotWeb.app Payload/
           
-          # 4. Create IPA
-          cd Payload
-          zip -r ../GodotOffline.ipa .
-          cd ..
+          # 4. Zip properly
+          zip -r GodotOffline.ipa Payload/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
