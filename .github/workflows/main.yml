@@ -1,88 +1,84 @@
-name: 🧪 Build Godot Web View iOS IPA
+name: 🧪 Build Offline Godot Web View IPA
 on:
   workflow_dispatch:
 
 jobs:
-  build-webview-ipa:
+  build-offline-ipa:
     runs-on: macos-15
-    name: Godot Web Editor (iOS Wrapper)
+    name: Godot Offline Editor (iOS Wrapper)
     timeout-minutes: 15
 
     steps:
       - name: Setup App Directory Structure
         run: |
-          mkdir -p payload/GodotWeb.app
-          cd payload
+          mkdir -p build_stage/GodotWeb.app/godot_web
 
-      - name: Generate SwiftUI WebKit Source
+      - name: Download Godot Web Editor Artifacts
         run: |
-          cat << 'EOF' > payload/App.swift
+          # Download stable release files to bundle
+          cd build_stage/GodotWeb.app/godot_web
+          BASE="https://editor.godotengine.org/releases/4.3.stable"
+          curl -fO "$BASE/godot.editor.html"
+          curl -fO "$BASE/godot.editor.js"
+          curl -fO "$BASE/godot.editor.wasm"
+          curl -fO "$BASE/godot.editor.worker.js" || true
+
+      - name: Generate SwiftUI & Custom Scheme Source
+        run: |
+          cat << 'EOF' > build_stage/App.swift
           import SwiftUI
           import WebKit
 
           @main
           struct GodotWebApp: App {
               var body: some Scene {
-                  WindowGroup {
-                      // Points to the latest stable web editor. 
-                      // You can pin this to a specific version if preferred (e.g., /releases/4.2.1/)
-                      WebView(url: URL(string: "https://editor.godotengine.org/releases/latest/")!)
-                          .ignoresSafeArea()
-                  }
+                  WindowGroup { WebView().ignoresSafeArea() }
               }
           }
 
+          class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
+              func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+                  guard let url = urlSchemeTask.request.url else { return }
+                  let path = url.path.isEmpty || url.path == "/" ? "/godot.editor.html" : url.path
+                  let bundlePath = Bundle.main.bundlePath + "/godot_web" + path
+                  
+                  if let data = FileManager.default.contents(atPath: bundlePath) {
+                      let headers = [
+                          "Content-Type": path.hasSuffix(".wasm") ? "application/wasm" : "text/html",
+                          "Cross-Origin-Opener-Policy": "same-origin",
+                          "Cross-Origin-Embedder-Policy": "require-corp"
+                      ]
+                      let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers)!
+                      urlSchemeTask.didReceive(response)
+                      urlSchemeTask.didReceive(data)
+                      urlSchemeTask.didFinish()
+                  }
+              }
+              func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+          }
+
           struct WebView: UIViewRepresentable {
-              let url: URL
-              
               func makeUIView(context: Context) -> WKWebView {
-                  let prefs = WKWebpagePreferences()
-                  prefs.allowsContentJavaScript = true
-                  
                   let config = WKWebViewConfiguration()
-                  config.defaultWebpagePreferences = prefs
-                  config.allowsInlineMediaPlayback = true
-                  
+                  config.setURLSchemeHandler(LocalSchemeHandler(), forURLScheme: "godot")
                   let webView = WKWebView(frame: .zero, configuration: config)
-                  webView.isOpaque = false
-                  webView.backgroundColor = UIColor.black
-                  webView.scrollView.bounces = false
-                  webView.scrollView.isScrollEnabled = false
-                  
-                  webView.load(URLRequest(url: url))
+                  webView.load(URLRequest(url: URL(string: "godot://local/godot.editor.html")!))
                   return webView
               }
-              
-              func updateUIView(_ webView: WKWebView, context: Context) {}
+              func updateUIView(_ uiView: WKWebView, context: Context) {}
           }
           EOF
 
       - name: Generate Info.plist
         run: |
-          cat << 'EOF' > payload/GodotWeb.app/Info.plist
+          cat << 'EOF' > build_stage/GodotWeb.app/Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
               <key>CFBundleExecutable</key>
               <string>GodotWeb</string>
               <key>CFBundleIdentifier</key>
-              <string>org.godotengine.webview</string>
-              <key>CFBundleName</key>
-              <string>Godot Web</string>
-              <key>CFBundleVersion</key>
-              <string>1.0</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
-              <key>UILaunchStoryboardName</key>
-              <string>LaunchScreen</string>
-              <key>UIRequiresFullScreen</key>
-              <true/>
-              <key>UISupportedInterfaceOrientations</key>
-              <array>
-                  <string>UIInterfaceOrientationLandscapeLeft</string>
-                  <string>UIInterfaceOrientationLandscapeRight</string>
-              </array>
+              <string>org.godotengine.offline</string>
               <key>UIFileSharingEnabled</key>
               <true/>
               <key>LSSupportsOpeningDocumentsInPlace</key>
@@ -91,27 +87,10 @@ jobs:
           </plist>
           EOF
 
-      - name: Compile Swift Binary (arm64)
+      - name: Compile & Package
         run: |
-          echo "Compiling Swift source directly for iOS..."
           SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
-          
-          # Direct compilation bypassing xcodebuild overhead
-          swiftc -target arm64-apple-ios15.0 -sdk "$SDK_PATH" \
-            -O -whole-module-optimization \
-            -parse-as-library \
-            payload/App.swift -o payload/GodotWeb.app/GodotWeb
-
-      - name: Package Unsigned IPA
-        run: |
-          echo "Packaging application payload..."
+          swiftc -target arm64-apple-ios15.0 -sdk "$SDK_PATH" -O build_stage/App.swift -o build_stage/GodotWeb.app/GodotWeb
           mkdir -p Payload
-          mv payload/GodotWeb.app Payload/
-          zip -r GodotWebView_Unsigned.ipa Payload/
-
-      - name: Upload Unsigned IPA Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: godot-ios-webview-unsigned-ipa
-          path: GodotWebView_Unsigned.ipa
-          if-no-files-found: error
+          mv build_stage/GodotWeb.app Payload/
+          zip -r GodotOffline.ipa Payload/
