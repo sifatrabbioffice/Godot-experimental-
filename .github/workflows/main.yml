@@ -2,74 +2,90 @@ name: 🧪 Build Godot iOS Editor from Master
 on:
   workflow_dispatch:
 
+env:
+  SCONS_FLAGS: >-
+    dev_mode=yes
+    module_text_server_fb_enabled=yes
+    debug_symbols=no
 jobs:
   ios-editor-master:
-    runs-on: macos-14
+    runs-on: macos-15
     name: Godot Editor (Master, iOS)
     timeout-minutes: 120
 
     steps:
-      - name: Checkout Godot
+      # ১. Godot-এর অফিশিয়াল রিপোজিটরি (Master Branch) ক্লোন করা
+      - name: Checkout Godot Master Branch
         uses: actions/checkout@v4
         with:
           repository: godotengine/godot
           ref: master
           submodules: recursive
 
-      - name: Compile editor (arm64)
-        run: |
-          # Python এবং SCons দিয়ে বিল্ড করা (Godot অফিশিয়াল বিল্ড মেথড)
-          python3 -m pip install scons
-          scons platform=ios target=editor arch=arm64
+      # ২. ক্যাশ এবং ডিপেন্ডেন্সি সেটআপ
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        continue-on-error: true
 
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      # ৩. Editor কম্পাইল করা
+      - name: Compile editor (arm64)
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }}
+          platform: ios
+          target: editor
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        continue-on-error: true
+
+      # ৪. Unsigned IPA তৈরি করা (current apple_embedded_xcode layout)
       - name: Package Unsigned IPA
         run: |
-          echo "Setting up Info.plist..."
-          mkdir -p misc/dist/ios_xcode/godot_ios/
-          
-          # Info.plist তৈরি
-          cat <<EOF > misc/dist/ios_xcode/godot_ios/Info.plist
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleIdentifier</key>
-              <string>com.godot.editor</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
-              <key>CFBundleVersion</key>
-              <string>1</string>
-              <key>UIFileSharingEnabled</key>
-              <true/>
-              <key>LSSupportsOpeningDocumentsInPlace</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
+          echo "Preparing to build Unsigned IPA from Master Branch..."
 
-          cd misc/dist/ios_xcode
-          
-          # স্কিমের নাম খুঁজে বের করা (যাতে আর এরর না দেয়)
-          SCHEME=$(xcodebuild -list | grep "Scheme:" -A 1 | tail -n 1 | xargs)
-          echo "Using Scheme: $SCHEME"
-          
-          # বিল্ড করা
-          xcodebuild -scheme "$SCHEME" \
+          # The compiled lib is a raw static archive (libgodot.ios.editor.arm64.a).
+          # The current project (apple_embedded_xcode) expects a properly
+          # assembled .xcframework, not a renamed .a — so build one.
+          cd bin/
+          EDITOR_LIB=$(ls libgodot.ios.editor.*.a | head -n 1)
+          cd ..
+
+          XCFRAMEWORK_DEST="misc/dist/apple_embedded_xcode/libgodot.ios.release.xcframework"
+          rm -rf "$XCFRAMEWORK_DEST"
+          xcodebuild -create-xcframework \
+            -library "bin/$EDITOR_LIB" \
+            -output "$XCFRAMEWORK_DEST"
+
+          # File Sharing Permission (path updated for current layout)
+          PLIST="misc/dist/apple_embedded_xcode/godot_apple_embedded/godot_apple_embedded-Info.plist"
+          plutil -replace UIFileSharingEnabled -bool YES "$PLIST"
+          plutil -replace LSSupportsOpeningDocumentsInPlace -bool YES "$PLIST"
+
+          # Disable Code Signing and Build
+          cd misc/dist/apple_embedded_xcode
+          xcodebuild -project godot_apple_embedded.xcodeproj \
+            -target godot_apple_embedded \
             -configuration Release \
-            -destination 'generic/platform=iOS' \
+            -sdk iphoneos \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             build
 
-          # IPA তৈরি
+          # IPA Packaging
           cd build/Release-iphoneos
-          mkdir -p Payload
-          cp -r *.app Payload/
+          mkdir Payload
+          mv godot_apple_embedded.app Payload/
           zip -r GodotEditor_Master_Unsigned.ipa Payload/
 
-      - name: Upload Unsigned IPA
+      # ৫. তৈরি হওয়া IPA ফাইলটি আপলোড করা
+      - name: Upload Unsigned IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-ios-editor-ipa
-          path: misc/dist/ios_xcode/build/Release-iphoneos/GodotEditor_Master_Unsigned.ipa
+          name: godot-ios-editor-master-unsigned-ipa
+          path: misc/dist/apple_embedded_xcode/build/Release-iphoneos/GodotEditor_Master_Unsigned.ipa
+          if-no-files-found: error
