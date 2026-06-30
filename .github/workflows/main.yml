@@ -10,7 +10,7 @@ env:
 
 jobs:
   ios-editor-master:
-    runs-on: macos-15
+    runs-on: macos-14
     name: Godot Editor (Master, iOS)
     timeout-minutes: 120
 
