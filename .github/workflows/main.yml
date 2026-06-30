@@ -6,24 +6,20 @@ jobs:
   build-offline-ipa:
     runs-on: macos-15
     name: Godot Offline Editor (iOS Wrapper)
-    timeout-minutes: 15
-
     steps:
-      - name: Setup App Directory Structure
+      - name: Setup Structure
         run: |
           mkdir -p build_stage/GodotWeb.app/godot_web
 
-      - name: Download Godot Web Editor Artifacts
+      - name: Download Offline Assets
         run: |
-          # Download stable release files to bundle
           cd build_stage/GodotWeb.app/godot_web
           BASE="https://editor.godotengine.org/releases/4.3.stable"
           curl -fO "$BASE/godot.editor.html"
           curl -fO "$BASE/godot.editor.js"
           curl -fO "$BASE/godot.editor.wasm"
-          curl -fO "$BASE/godot.editor.worker.js" || true
 
-      - name: Generate SwiftUI & Custom Scheme Source
+      - name: Generate Swift Source
         run: |
           cat << 'EOF' > build_stage/App.swift
           import SwiftUI
@@ -73,6 +69,7 @@ jobs:
         run: |
           cat << 'EOF' > build_stage/GodotWeb.app/Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
               <key>CFBundleExecutable</key>
@@ -87,10 +84,17 @@ jobs:
           </plist>
           EOF
 
-      - name: Compile & Package
+      - name: Compile and Package
         run: |
           SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
-          swiftc -target arm64-apple-ios15.0 -sdk "$SDK_PATH" -O build_stage/App.swift -o build_stage/GodotWeb.app/GodotWeb
+          # The -parse-as-library flag is required to use @main
+          swiftc -target arm64-apple-ios15.0 \
+                 -sdk "$SDK_PATH" \
+                 -O \
+                 -parse-as-library \
+                 build_stage/App.swift \
+                 -o build_stage/GodotWeb.app/GodotWeb
+          
           mkdir -p Payload
           mv build_stage/GodotWeb.app Payload/
           zip -r GodotOffline.ipa Payload/
