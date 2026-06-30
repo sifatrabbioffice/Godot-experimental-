@@ -1,0 +1,83 @@
+name: 🧪 Build Godot iOS Editor from Master
+on:
+  workflow_dispatch:
+
+env:
+  SCONS_FLAGS: >-
+    dev_mode=yes
+    module_text_server_fb_enabled=yes
+    debug_symbols=no
+
+jobs:
+  ios-editor-master:
+    runs-on: macos-14 # GitHub-এর লেটেস্ট স্টেবল macOS এনভায়রনমেন্ট
+    name: Godot Editor (Master, iOS)
+    timeout-minutes: 120 # Master ব্রাঞ্চের সাইজ বড় হতে পারে, তাই সময় বাড়িয়ে ১২০ মিনিট করা হলো
+
+    steps:
+      # ১. Godot-এর অফিশিয়াল রিপোজিটরি (Master Branch) ক্লোন করা
+      - name: Checkout Godot Master Branch
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot # সরাসরি অফিশিয়াল Godot রিপোজিটরি থেকে আনবে
+          ref: master # Master ব্রাঞ্চ নির্দিষ্ট করে দেওয়া হলো
+          submodules: recursive # Godot-এর ভেতরের সব থার্ড-পার্টি লাইব্রেরিও ডাউনলোড করবে
+
+      # ২. ক্যাশ এবং ডিপেন্ডেন্সি সেটআপ (Godot-এর নিজস্ব অ্যাকশন স্ক্রিপ্ট ব্যবহার করে)
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      # ৩. Editor কম্পাইল করা
+      - name: Compile editor (arm64)
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }}
+          platform: ios
+          target: editor
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        continue-on-error: true
+
+      # ৪. Unsigned IPA তৈরি করা (Xcode Project মডিফাই করে)
+      - name: Package Unsigned IPA
+        run: |
+          echo "Preparing to build Unsigned IPA from Master Branch..."
+          
+          # Library Rename
+          cd bin/
+          EDITOR_LIB=$(ls libgodot.ios.editor.*.a | head -n 1)
+          cp "$EDITOR_LIB" "libgodot.ios.template_release.arm64.a"
+          cd ..
+
+          # File Sharing Permission
+          plutil -replace UIFileSharingEnabled -bool YES misc/dist/ios_xcode/godot_ios/Info.plist
+          plutil -replace LSSupportsOpeningDocumentsInPlace -bool YES misc/dist/ios_xcode/godot_ios/Info.plist
+
+          # Disable Code Signing and Build
+          cd misc/dist/ios_xcode
+          xcodebuild -project godot_ios.xcodeproj \
+            -target godot_ios \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+          # IPA Packaging
+          cd build/Release-iphoneos
+          mkdir Payload
+          mv godot_ios.app Payload/
+          zip -r GodotEditor_Master_Unsigned.ipa Payload/
+
+      # ৫. তৈরি হওয়া IPA ফাইলটি আপলোড করা
+      - name: Upload Unsigned IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-ios-editor-master-unsigned-ipa
+          path: misc/dist/ios_xcode/build/Release-iphoneos/GodotEditor_Master_Unsigned.ipa
+          if-no-files-found: error
