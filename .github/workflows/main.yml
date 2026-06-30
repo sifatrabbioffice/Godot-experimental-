@@ -1,91 +1,117 @@
-name: 🧪 Build Godot iOS Editor from Master
+name: 🧪 Build Godot Web View iOS IPA
 on:
   workflow_dispatch:
 
-env:
-  SCONS_FLAGS: >-
-    dev_mode=yes
-    module_text_server_fb_enabled=yes
-    debug_symbols=no
 jobs:
-  ios-editor-master:
+  build-webview-ipa:
     runs-on: macos-15
-    name: Godot Editor (Master, iOS)
-    timeout-minutes: 120
+    name: Godot Web Editor (iOS Wrapper)
+    timeout-minutes: 15
 
     steps:
-      # ১. Godot-এর অফিশিয়াল রিপোজিটরি (Master Branch) ক্লোন করা
-      - name: Checkout Godot Master Branch
-        uses: actions/checkout@v4
-        with:
-          repository: godotengine/godot
-          ref: master
-          submodules: recursive
+      - name: Setup App Directory Structure
+        run: |
+          mkdir -p payload/GodotWeb.app
+          cd payload
 
-      # ২. ক্যাশ এবং ডিপেন্ডেন্সি সেটআপ
-      - name: Restore Godot build cache
-        uses: ./.github/actions/godot-cache-restore
-        continue-on-error: true
+      - name: Generate SwiftUI WebKit Source
+        run: |
+          cat << 'EOF' > payload/App.swift
+          import SwiftUI
+          import WebKit
 
-      - name: Setup Python and SCons
-        uses: ./.github/actions/godot-deps
+          @main
+          struct GodotWebApp: App {
+              var body: some Scene {
+                  WindowGroup {
+                      // Points to the latest stable web editor. 
+                      // You can pin this to a specific version if preferred (e.g., /releases/4.2.1/)
+                      WebView(url: URL(string: "https://editor.godotengine.org/releases/latest/")!)
+                          .ignoresSafeArea()
+                  }
+              }
+          }
 
-      # ৩. Editor কম্পাইল করা
-      - name: Compile editor (arm64)
-        uses: ./.github/actions/godot-build
-        with:
-          scons-flags: ${{ env.SCONS_FLAGS }}
-          platform: ios
-          target: editor
+          struct WebView: UIViewRepresentable {
+              let url: URL
+              
+              func makeUIView(context: Context) -> WKWebView {
+                  let prefs = WKWebpagePreferences()
+                  prefs.allowsContentJavaScript = true
+                  
+                  let config = WKWebViewConfiguration()
+                  config.defaultWebpagePreferences = prefs
+                  config.allowsInlineMediaPlayback = true
+                  
+                  let webView = WKWebView(frame: .zero, configuration: config)
+                  webView.isOpaque = false
+                  webView.backgroundColor = UIColor.black
+                  webView.scrollView.bounces = false
+                  webView.scrollView.isScrollEnabled = false
+                  
+                  webView.load(URLRequest(url: url))
+                  return webView
+              }
+              
+              func updateUIView(_ webView: WKWebView, context: Context) {}
+          }
+          EOF
 
-      - name: Save Godot build cache
-        uses: ./.github/actions/godot-cache-save
-        continue-on-error: true
+      - name: Generate Info.plist
+        run: |
+          cat << 'EOF' > payload/GodotWeb.app/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>GodotWeb</string>
+              <key>CFBundleIdentifier</key>
+              <string>org.godotengine.webview</string>
+              <key>CFBundleName</key>
+              <string>Godot Web</string>
+              <key>CFBundleVersion</key>
+              <string>1.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>UILaunchStoryboardName</key>
+              <string>LaunchScreen</string>
+              <key>UIRequiresFullScreen</key>
+              <true/>
+              <key>UISupportedInterfaceOrientations</key>
+              <array>
+                  <string>UIInterfaceOrientationLandscapeLeft</string>
+                  <string>UIInterfaceOrientationLandscapeRight</string>
+              </array>
+              <key>UIFileSharingEnabled</key>
+              <true/>
+              <key>LSSupportsOpeningDocumentsInPlace</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
 
-      # ৪. Unsigned IPA তৈরি করা (current apple_embedded_xcode layout)
+      - name: Compile Swift Binary (arm64)
+        run: |
+          echo "Compiling Swift source directly for iOS..."
+          SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
+          
+          # Direct compilation bypassing xcodebuild overhead
+          swiftc -target arm64-apple-ios15.0 -sdk "$SDK_PATH" \
+            -O -whole-module-optimization \
+            -parse-as-library \
+            payload/App.swift -o payload/GodotWeb.app/GodotWeb
+
       - name: Package Unsigned IPA
         run: |
-          echo "Preparing to build Unsigned IPA from Master Branch..."
+          echo "Packaging application payload..."
+          mkdir -p Payload
+          mv payload/GodotWeb.app Payload/
+          zip -r GodotWebView_Unsigned.ipa Payload/
 
-          # The compiled lib is a raw static archive (libgodot.ios.editor.arm64.a).
-          # The current project (apple_embedded_xcode) expects a properly
-          # assembled .xcframework, not a renamed .a — so build one.
-          cd bin/
-          EDITOR_LIB=$(ls libgodot.ios.editor.*.a | head -n 1)
-          cd ..
-
-          XCFRAMEWORK_DEST="misc/dist/apple_embedded_xcode/libgodot.ios.release.xcframework"
-          rm -rf "$XCFRAMEWORK_DEST"
-          xcodebuild -create-xcframework \
-            -library "bin/$EDITOR_LIB" \
-            -output "$XCFRAMEWORK_DEST"
-
-          # File Sharing Permission (path updated for current layout)
-          PLIST="misc/dist/apple_embedded_xcode/godot_apple_embedded/godot_apple_embedded-Info.plist"
-          plutil -replace UIFileSharingEnabled -bool YES "$PLIST"
-          plutil -replace LSSupportsOpeningDocumentsInPlace -bool YES "$PLIST"
-
-          # Disable Code Signing and Build
-          cd misc/dist/apple_embedded_xcode
-          xcodebuild -project godot_apple_embedded.xcodeproj \
-            -target godot_apple_embedded \
-            -configuration Release \
-            -sdk iphoneos \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-
-          # IPA Packaging
-          cd build/Release-iphoneos
-          mkdir Payload
-          mv godot_apple_embedded.app Payload/
-          zip -r GodotEditor_Master_Unsigned.ipa Payload/
-
-      # ৫. তৈরি হওয়া IPA ফাইলটি আপলোড করা
       - name: Upload Unsigned IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-ios-editor-master-unsigned-ipa
-          path: misc/dist/apple_embedded_xcode/build/Release-iphoneos/GodotEditor_Master_Unsigned.ipa
+          name: godot-ios-webview-unsigned-ipa
+          path: GodotWebView_Unsigned.ipa
           if-no-files-found: error
