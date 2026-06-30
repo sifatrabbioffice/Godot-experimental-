@@ -10,14 +10,17 @@ jobs:
       - name: Setup Directory
         run: mkdir -p build_stage/GodotWeb.app/godot_web
 
-      - name: Download Master Assets
+      - name: Download Offline Assets
         run: |
           cd build_stage/GodotWeb.app/godot_web
-          # Pointing to the latest master build artifacts
-          BASE="https://editor.godotengine.org/master"
-          curl -fO "$BASE/godot.editor.html"
-          curl -fO "$BASE/godot.editor.js"
-          curl -fO "$BASE/godot.editor.wasm"
+          # Pointing to the validated stable CDN release path
+          BASE="https://editor.godotengine.org/releases/4.3.stable"
+          
+          # Downloading with fallback logging
+          curl -L -fO "$BASE/godot.editor.html" || { echo "Failed to download HTML"; exit 1; }
+          curl -L -fO "$BASE/godot.editor.js" || { echo "Failed to download JS"; exit 1; }
+          curl -L -fO "$BASE/godot.editor.wasm" || { echo "Failed to download Wasm"; exit 1; }
+
 
       - name: Generate High-Performance Swift
         run: |
