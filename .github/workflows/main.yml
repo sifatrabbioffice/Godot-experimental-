@@ -87,7 +87,7 @@ jobs:
       - name: Compile and Package
         run: |
           SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
-          # The -parse-as-library flag is required to use @main
+          # Compile the binary
           swiftc -target arm64-apple-ios15.0 \
                  -sdk "$SDK_PATH" \
                  -O \
@@ -95,17 +95,10 @@ jobs:
                  build_stage/App.swift \
                  -o build_stage/GodotWeb.app/GodotWeb
           
+          # Move to Payload once, and create the IPA
           mkdir -p Payload
           mv build_stage/GodotWeb.app Payload/
-          zip -r GodotOffline.ipa Payload/
-
-
-      - name: Package Unsigned IPA
-        run: |
-           echo "Packaging application payload..."
-           mkdir -p Payload 
-           mv build_stage/GodotWeb.app Payload/
-           zip -r GodotOffline_Unsigned.ipa Payload/
+          zip -r GodotOffline_Unsigned.ipa Payload/
 
       - name: Upload Unsigned IPA Artifact
         uses: actions/upload-artifact@v4
@@ -113,4 +106,3 @@ jobs:
           name: godot-ios-offline-unsigned-ipa
           path: GodotOffline_Unsigned.ipa
           if-no-files-found: error
-
