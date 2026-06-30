@@ -98,3 +98,19 @@ jobs:
           mkdir -p Payload
           mv build_stage/GodotWeb.app Payload/
           zip -r GodotOffline.ipa Payload/
+
+
+      - name: Package Unsigned IPA
+        run: |
+           echo "Packaging application payload..."
+           mkdir -p Payload 
+           mv build_stage/GodotWeb.app Payload/
+           zip -r GodotOffline_Unsigned.ipa Payload/
+
+      - name: Upload Unsigned IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-ios-offline-unsigned-ipa
+          path: GodotOffline_Unsigned.ipa
+          if-no-files-found: error
+
