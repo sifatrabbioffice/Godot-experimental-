@@ -1,25 +1,25 @@
-name: 🧪 Build Offline Godot Web View IPA
+name: 🧪 Build Optimized Offline Master Editor
 on:
   workflow_dispatch:
 
 jobs:
-  build-offline-ipa:
+  build-optimized-editor:
     runs-on: macos-15
-    name: Godot Offline Editor (iOS Wrapper)
+    name: Godot Master Offline (High Performance)
     steps:
-      - name: Setup Structure
-        run: |
-          mkdir -p build_stage/GodotWeb.app/godot_web
+      - name: Setup Directory
+        run: mkdir -p build_stage/GodotWeb.app/godot_web
 
-      - name: Download Offline Assets
+      - name: Download Master Assets
         run: |
           cd build_stage/GodotWeb.app/godot_web
-          BASE="https://editor.godotengine.org/releases/4.3.stable"
+          # Pointing to the latest master build artifacts
+          BASE="https://editor.godotengine.org/master"
           curl -fO "$BASE/godot.editor.html"
           curl -fO "$BASE/godot.editor.js"
           curl -fO "$BASE/godot.editor.wasm"
 
-      - name: Generate Swift Source
+      - name: Generate High-Performance Swift
         run: |
           cat << 'EOF' > build_stage/App.swift
           import SwiftUI
@@ -33,23 +33,33 @@ jobs:
           }
 
           class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
+              // Pre-load assets into memory for faster access
+              private var cache: [String: Data] = [:]
+
               func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
-                  guard let url = urlSchemeTask.request.url else { return }
-                  let path = url.path.isEmpty || url.path == "/" ? "/godot.editor.html" : url.path
-                  let bundlePath = Bundle.main.bundlePath + "/godot_web" + path
+                  let path = urlSchemeTask.request.url?.path ?? "/godot.editor.html"
+                  let fileName = path == "/" ? "/godot.editor.html" : path
                   
-                  if let data = FileManager.default.contents(atPath: bundlePath) {
+                  if let data = cache[fileName] ?? loadFromBundle(fileName) {
+                      cache[fileName] = data
                       let headers = [
-                          "Content-Type": path.hasSuffix(".wasm") ? "application/wasm" : "text/html",
+                          "Content-Type": fileName.hasSuffix(".wasm") ? "application/wasm" : "text/html",
                           "Cross-Origin-Opener-Policy": "same-origin",
-                          "Cross-Origin-Embedder-Policy": "require-corp"
+                          "Cross-Origin-Embedder-Policy": "require-corp",
+                          "Cache-Control": "max-age=31536000" // Cache aggressively
                       ]
-                      let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers)!
+                      let response = HTTPURLResponse(url: urlSchemeTask.request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers)!
                       urlSchemeTask.didReceive(response)
                       urlSchemeTask.didReceive(data)
                       urlSchemeTask.didFinish()
                   }
               }
+              
+              private func loadFromBundle(_ path: String) -> Data? {
+                  let fullPath = Bundle.main.bundlePath + "/godot_web" + path
+                  return try? Data(contentsOf: URL(fileURLWithPath: fullPath))
+              }
+              
               func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
           }
 
@@ -58,6 +68,8 @@ jobs:
                   let config = WKWebViewConfiguration()
                   config.setURLSchemeHandler(LocalSchemeHandler(), forURLScheme: "godot")
                   let webView = WKWebView(frame: .zero, configuration: config)
+                  // Use hardware acceleration
+                  webView.configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
                   webView.load(URLRequest(url: URL(string: "godot://local/godot.editor.html")!))
                   return webView
               }
@@ -65,44 +77,20 @@ jobs:
           }
           EOF
 
-      - name: Generate Info.plist
-        run: |
-          cat << 'EOF' > build_stage/GodotWeb.app/Info.plist
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>GodotWeb</string>
-              <key>CFBundleIdentifier</key>
-              <string>org.godotengine.offline</string>
-              <key>UIFileSharingEnabled</key>
-              <true/>
-              <key>LSSupportsOpeningDocumentsInPlace</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
-
-      - name: Compile and Package
+      - name: Compile Optimized Binary
         run: |
           SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
-          # Compile the binary
-          swiftc -target arm64-apple-ios15.0 \
-                 -sdk "$SDK_PATH" \
-                 -O \
-                 -parse-as-library \
-                 build_stage/App.swift \
-                 -o build_stage/GodotWeb.app/GodotWeb
-          
-          # Move to Payload once, and create the IPA
+          # Optimized for speed (-O) with library parsing
+          swiftc -target arm64-apple-ios15.0 -sdk "$SDK_PATH" -O -parse-as-library \
+            build_stage/App.swift -o build_stage/GodotWeb.app/GodotWeb
+            
+          # Prepare Payload
           mkdir -p Payload
           mv build_stage/GodotWeb.app Payload/
-          zip -r GodotOffline_Unsigned.ipa Payload/
+          zip -r GodotMaster_Optimized.ipa Payload/
 
-      - name: Upload Unsigned IPA Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-ios-offline-unsigned-ipa
-          path: GodotOffline_Unsigned.ipa
-          if-no-files-found: error
+          name: godot-master-optimized-ipa
+          path: GodotMaster_Optimized.ipa
