@@ -10,7 +10,7 @@ env:
 
 jobs:
   ios-editor-master:
-    runs-on: macos-14 # GitHub-এর লেটেস্ট স্টেবল macOS এনভায়রনমেন্ট
+    runs-on: macos-15 # GitHub-এর লেটেস্ট স্টেবল macOS এনভায়রনমেন্ট
     name: Godot Editor (Master, iOS)
     timeout-minutes: 120 # Master ব্রাঞ্চের সাইজ বড় হতে পারে, তাই সময় বাড়িয়ে ১২০ মিনিট করা হলো
 
