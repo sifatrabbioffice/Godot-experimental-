@@ -37,88 +37,51 @@ jobs:
           platform: ios
           target: editor
 
-      - name: Save Godot build cache
-        uses: godotengine/godot/.github/actions/godot-cache-save@master
-        continue-on-error: true
-
       - name: Package Unsigned IPA
         run: |
-          echo "Writing custom Info.plist..."
+          echo "Setting up Info.plist..."
+          # ফোল্ডারটি নিশ্চিত করা
+          mkdir -p misc/dist/ios_xcode/godot_ios/
           
-          # সরাসরি ফাইল ওভাররাইট করা হচ্ছে
+          # ফাইলটি তৈরি করা
           cat <<EOF > misc/dist/ios_xcode/godot_ios/Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>CFBundleDevelopmentRegion</key>
-              <string>en</string>
-              <key>CFBundleDisplayName</key>
-              <string>GodotEditor</string>
-              <key>CFBundleExecutable</key>
-              <string>godot_ios</string>
               <key>CFBundleIdentifier</key>
               <string>com.godot.editor</string>
-              <key>CFBundleInfoDictionaryVersion</key>
-              <string>6.0</string>
-              <key>CFBundleName</key>
-              <string>GodotEditor</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
               <key>CFBundleShortVersionString</key>
               <string>1.0</string>
               <key>CFBundleVersion</key>
               <string>1</string>
               <key>UILaunchStoryboardName</key>
               <string>LaunchScreen</string>
-              <key>UIRequiredDeviceCapabilities</key>
-              <array>
-                  <string>arm64</string>
-                  <string>metal</string>
-              </array>
-              <key>UISupportedInterfaceOrientations</key>
-              <array>
-                  <string>UIInterfaceOrientationPortrait</string>
-                  <string>UIInterfaceOrientationLandscapeLeft</string>
-                  <string>UIInterfaceOrientationLandscapeRight</string>
-              </array>
               <key>UIFileSharingEnabled</key>
               <true/>
               <key>LSSupportsOpeningDocumentsInPlace</key>
               <true/>
-              <key>UIRequiresFullScreen</key>
-              <true/>
-              <key>UIViewControllerBasedStatusBarAppearance</key>
-              <false/>
           </dict>
           </plist>
           EOF
 
-          # Library Rename
-          cd bin/
-          EDITOR_LIB=$(ls libgodot.ios.editor.*.a | head -n 1)
-          cp "$EDITOR_LIB" "libgodot.ios.template_release.arm64.a"
-          cd ..
-
-          # Xcode Build
+          # বিল্ড ডিরেক্টরি চেক করা
           cd misc/dist/ios_xcode
-          xcodebuild -project godot_ios.xcodeproj \
-            -target godot_ios \
-            -configuration Release \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          
+          # প্রজেক্ট ফাইলটি ভেরিফাই করা (এটি লগে চেক করতে সাহায্য করবে)
+          ls -F
+          
+          # Xcode Build (সঠিক প্রজেক্ট ফাইল ব্যবহার করে)
+          xcodebuild -scheme godot_ios -configuration Release -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO build
 
           # IPA Structure
           cd build/Release-iphoneos
           mkdir -p Payload
-          mv godot_ios.app Payload/
+          cp -r godot_ios.app Payload/
           zip -r GodotEditor_Master_Unsigned.ipa Payload/
 
-      - name: Upload Unsigned IPA Artifact
+      - name: Upload Unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: godot-ios-editor-master-unsigned-ipa
+          name: godot-ios-editor-ipa
           path: misc/dist/ios_xcode/build/Release-iphoneos/GodotEditor_Master_Unsigned.ipa
-          if-no-files-found: error
