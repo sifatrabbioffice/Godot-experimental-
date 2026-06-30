@@ -11,12 +11,11 @@ jobs:
     steps:
       - name: Setup App Directory Structure
         run: |
-          mkdir -p payload/GodotWeb.app
-          cd payload
+          mkdir -p build_stage/GodotWeb.app
 
       - name: Generate SwiftUI WebKit Source
         run: |
-          cat << 'EOF' > payload/App.swift
+          cat << 'EOF' > build_stage/App.swift
           import SwiftUI
           import WebKit
 
@@ -25,7 +24,6 @@ jobs:
               var body: some Scene {
                   WindowGroup {
                       // Points to the latest stable web editor. 
-                      // You can pin this to a specific version if preferred (e.g., /releases/4.2.1/)
                       WebView(url: URL(string: "https://editor.godotengine.org/releases/latest/")!)
                           .ignoresSafeArea()
                   }
@@ -59,7 +57,7 @@ jobs:
 
       - name: Generate Info.plist
         run: |
-          cat << 'EOF' > payload/GodotWeb.app/Info.plist
+          cat << 'EOF' > build_stage/GodotWeb.app/Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -96,17 +94,17 @@ jobs:
           echo "Compiling Swift source directly for iOS..."
           SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
           
-          # Direct compilation bypassing xcodebuild overhead
           swiftc -target arm64-apple-ios15.0 -sdk "$SDK_PATH" \
             -O -whole-module-optimization \
             -parse-as-library \
-            payload/App.swift -o payload/GodotWeb.app/GodotWeb
+            build_stage/App.swift -o build_stage/GodotWeb.app/GodotWeb
 
       - name: Package Unsigned IPA
         run: |
           echo "Packaging application payload..."
           mkdir -p Payload
-          mv payload/GodotWeb.app Payload/
+          # Now safely moving from build_stage to Payload
+          mv build_stage/GodotWeb.app Payload/
           zip -r GodotWebView_Unsigned.ipa Payload/
 
       - name: Upload Unsigned IPA Artifact
