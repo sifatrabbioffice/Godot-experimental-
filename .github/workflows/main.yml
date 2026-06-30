@@ -13,7 +13,7 @@ jobs:
       - name: Download Master Assets
         run: |
           cd build_stage/GodotWeb.app/godot_web
-          BASE="https://editor.godotengine.org/releases/4.3.stable"
+          BASE="https://editor.godotengine.org/releases/4.7.stable"
           curl -L -fO "$BASE/godot.editor.html"
           curl -L -fO "$BASE/godot.editor.js"
           curl -fO "$BASE/godot.editor.wasm"
