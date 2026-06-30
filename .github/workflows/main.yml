@@ -1,4 +1,4 @@
-name: 🧪 Build Optimized Offline Master Editor
+name: 🧪 Build Optimized Offline Godot 4.7 Editor
 on:
   workflow_dispatch:
 
@@ -10,15 +10,17 @@ jobs:
         run: |
           mkdir -p build_stage/GodotWeb.app/godot_web
 
-      - name: Download Master Assets
+      - name: Download 4.7 Master Assets
         run: |
           cd build_stage/GodotWeb.app/godot_web
+          # ৪.৭ সংস্করণের জন্য প্রয়োজনীয় সকল ফাইল
           BASE="https://editor.godotengine.org/releases/4.7.stable"
           curl -L -fO "$BASE/godot.editor.html"
           curl -L -fO "$BASE/godot.editor.js"
-          curl -fO "$BASE/godot.editor.wasm"
+          curl -L -fO "$BASE/godot.editor.wasm"
+          curl -L -fO "$BASE/godot.editor.worker.js" || true
 
-      - name: Generate Swift Source
+      - name: Generate High-Performance Swift
         run: |
           cat << 'EOF' > build_stage/App.swift
           import SwiftUI
@@ -41,7 +43,8 @@ jobs:
                       let headers = [
                           "Content-Type": fileName.hasSuffix(".wasm") ? "application/wasm" : "text/html",
                           "Cross-Origin-Opener-Policy": "same-origin",
-                          "Cross-Origin-Embedder-Policy": "require-corp"
+                          "Cross-Origin-Embedder-Policy": "require-corp",
+                          "Access-Control-Allow-Origin": "*"
                       ]
                       let response = HTTPURLResponse(url: urlSchemeTask.request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers)!
                       urlSchemeTask.didReceive(response)
@@ -56,6 +59,8 @@ jobs:
               func makeUIView(context: Context) -> WKWebView {
                   let config = WKWebViewConfiguration()
                   config.setURLSchemeHandler(LocalSchemeHandler(), forURLScheme: "godot")
+                  config.defaultWebpagePreferences.allowsContentJavaScript = true
+                  
                   let webView = WKWebView(frame: .zero, configuration: config)
                   webView.load(URLRequest(url: URL(string: "godot://local/godot.editor.html")!))
                   return webView
@@ -85,23 +90,19 @@ jobs:
 
       - name: Compile and Package
         run: |
-          # 1. Compile with the exact name referenced in CFBundleExecutable
           SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
+          # -parse-as-library এবং -O ফ্ল্যাগ ব্যবহার করা হয়েছে
           swiftc -target arm64-apple-ios15.0 -sdk "$SDK_PATH" -O -parse-as-library \
             build_stage/App.swift -o build_stage/GodotWeb.app/GodotWeb
             
-          # 2. Critical: Set permissions so iOS kernel can map the binary
           chmod +x build_stage/GodotWeb.app/GodotWeb
           
-          # 3. Proper Packaging: Payload/App.app/Binary
           mkdir -p Payload
           mv build_stage/GodotWeb.app Payload/
-          
-          # 4. Zip properly
-          zip -r GodotOffline.ipa Payload/
+          zip -r GodotOffline_4.7.ipa Payload/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: godot-ios-offline-ipa
-          path: GodotOffline.ipa
+          path: GodotOffline_4.7.ipa
