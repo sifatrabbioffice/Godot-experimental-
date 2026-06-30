@@ -1,28 +1,25 @@
-name: 🧪 Build Optimized Offline Master Editor
+name: 🧪 Build Offline Godot Web View IPA
 on:
   workflow_dispatch:
 
 jobs:
-  build-optimized-editor:
+  build-offline-ipa:
     runs-on: macos-15
-    name: Godot Master Offline (High Performance)
+    name: Godot Offline Editor (iOS Wrapper)
     steps:
-      - name: Setup Directory
-        run: mkdir -p build_stage/GodotWeb.app/godot_web
+      - name: Setup Workspace
+        run: |
+          mkdir -p build_stage/GodotWeb.app/godot_web
 
-      - name: Download Offline Assets
+      - name: Download Master Assets
         run: |
           cd build_stage/GodotWeb.app/godot_web
-          # Pointing to the validated stable CDN release path
           BASE="https://editor.godotengine.org/releases/4.3.stable"
-          
-          # Downloading with fallback logging
-          curl -L -fO "$BASE/godot.editor.html" || { echo "Failed to download HTML"; exit 1; }
-          curl -L -fO "$BASE/godot.editor.js" || { echo "Failed to download JS"; exit 1; }
-          curl -L -fO "$BASE/godot.editor.wasm" || { echo "Failed to download Wasm"; exit 1; }
+          curl -L -fO "$BASE/godot.editor.html"
+          curl -L -fO "$BASE/godot.editor.js"
+          curl -L -fO "$BASE/godot.editor.wasm"
 
-
-      - name: Generate High-Performance Swift
+      - name: Generate Swift Source
         run: |
           cat << 'EOF' > build_stage/App.swift
           import SwiftUI
@@ -36,20 +33,16 @@ jobs:
           }
 
           class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
-              // Pre-load assets into memory for faster access
-              private var cache: [String: Data] = [:]
-
               func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
                   let path = urlSchemeTask.request.url?.path ?? "/godot.editor.html"
                   let fileName = path == "/" ? "/godot.editor.html" : path
+                  let bundlePath = Bundle.main.bundlePath + "/godot_web" + fileName
                   
-                  if let data = cache[fileName] ?? loadFromBundle(fileName) {
-                      cache[fileName] = data
+                  if let data = try? Data(contentsOf: URL(fileURLWithPath: bundlePath)) {
                       let headers = [
                           "Content-Type": fileName.hasSuffix(".wasm") ? "application/wasm" : "text/html",
                           "Cross-Origin-Opener-Policy": "same-origin",
-                          "Cross-Origin-Embedder-Policy": "require-corp",
-                          "Cache-Control": "max-age=31536000" // Cache aggressively
+                          "Cross-Origin-Embedder-Policy": "require-corp"
                       ]
                       let response = HTTPURLResponse(url: urlSchemeTask.request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers)!
                       urlSchemeTask.didReceive(response)
@@ -57,12 +50,6 @@ jobs:
                       urlSchemeTask.didFinish()
                   }
               }
-              
-              private func loadFromBundle(_ path: String) -> Data? {
-                  let fullPath = Bundle.main.bundlePath + "/godot_web" + path
-                  return try? Data(contentsOf: URL(fileURLWithPath: fullPath))
-              }
-              
               func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
           }
 
@@ -71,8 +58,6 @@ jobs:
                   let config = WKWebViewConfiguration()
                   config.setURLSchemeHandler(LocalSchemeHandler(), forURLScheme: "godot")
                   let webView = WKWebView(frame: .zero, configuration: config)
-                  // Use hardware acceleration
-                  webView.configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
                   webView.load(URLRequest(url: URL(string: "godot://local/godot.editor.html")!))
                   return webView
               }
@@ -80,20 +65,49 @@ jobs:
           }
           EOF
 
-      - name: Compile Optimized Binary
+      - name: Generate Info.plist
+        run: |
+          cat << 'EOF' > build_stage/GodotWeb.app/Info.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>GodotWeb</string>
+              <key>CFBundleIdentifier</key>
+              <string>org.godotengine.offline</string>
+              <key>CFBundleName</key>
+              <string>GodotWeb</string>
+              <key>CFBundleVersion</key>
+              <string>1.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Compile and Package
         run: |
           SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
-          # Optimized for speed (-O) with library parsing
+          
+          # 1. Compile directly into the bundle
           swiftc -target arm64-apple-ios15.0 -sdk "$SDK_PATH" -O -parse-as-library \
             build_stage/App.swift -o build_stage/GodotWeb.app/GodotWeb
-            
-          # Prepare Payload
+          
+          # 2. Grant execution permissions
+          chmod +x build_stage/GodotWeb.app/GodotWeb
+          
+          # 3. Create strictly compliant Payload structure
           mkdir -p Payload
-          mv build_stage/GodotWeb.app Payload/
-          zip -r GodotMaster_Optimized.ipa Payload/
+          cp -r build_stage/GodotWeb.app Payload/
+          
+          # 4. Create IPA
+          cd Payload
+          zip -r ../GodotOffline.ipa .
+          cd ..
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-master-optimized-ipa
-          path: GodotMaster_Optimized.ipa
+          name: godot-ios-offline-ipa
+          path: GodotOffline.ipa
