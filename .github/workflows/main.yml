@@ -2,48 +2,32 @@ name: 🧪 Build Godot iOS Editor from Master
 on:
   workflow_dispatch:
 
-env:
-  SCONS_FLAGS: >-
-    dev_mode=yes
-    module_text_server_fb_enabled=yes
-    debug_symbols=no
-
 jobs:
   ios-editor-master:
-    runs-on: macos-15
+    runs-on: macos-14
     name: Godot Editor (Master, iOS)
     timeout-minutes: 120
 
     steps:
-      - name: Checkout Godot Master Branch
+      - name: Checkout Godot
         uses: actions/checkout@v4
         with:
           repository: godotengine/godot
           ref: master
           submodules: recursive
-          fetch-depth: 1
-
-      - name: Restore Godot build cache
-        uses: godotengine/godot/.github/actions/godot-cache-restore@master
-        continue-on-error: true
-
-      - name: Setup Python and SCons
-        uses: godotengine/godot/.github/actions/godot-deps@master
 
       - name: Compile editor (arm64)
-        uses: godotengine/godot/.github/actions/godot-build@master
-        with:
-          scons-flags: ${{ env.SCONS_FLAGS }}
-          platform: ios
-          target: editor
+        run: |
+          # Python এবং SCons দিয়ে বিল্ড করা (Godot অফিশিয়াল বিল্ড মেথড)
+          python3 -m pip install scons
+          scons platform=ios target=editor arch=arm64
 
       - name: Package Unsigned IPA
         run: |
           echo "Setting up Info.plist..."
-          # ফোল্ডারটি নিশ্চিত করা
           mkdir -p misc/dist/ios_xcode/godot_ios/
           
-          # ফাইলটি তৈরি করা
+          # Info.plist তৈরি
           cat <<EOF > misc/dist/ios_xcode/godot_ios/Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -55,8 +39,6 @@ jobs:
               <string>1.0</string>
               <key>CFBundleVersion</key>
               <string>1</string>
-              <key>UILaunchStoryboardName</key>
-              <string>LaunchScreen</string>
               <key>UIFileSharingEnabled</key>
               <true/>
               <key>LSSupportsOpeningDocumentsInPlace</key>
@@ -65,19 +47,25 @@ jobs:
           </plist>
           EOF
 
-          # বিল্ড ডিরেক্টরি চেক করা
           cd misc/dist/ios_xcode
           
-          # প্রজেক্ট ফাইলটি ভেরিফাই করা (এটি লগে চেক করতে সাহায্য করবে)
-          ls -F
+          # স্কিমের নাম খুঁজে বের করা (যাতে আর এরর না দেয়)
+          SCHEME=$(xcodebuild -list | grep "Scheme:" -A 1 | tail -n 1 | xargs)
+          echo "Using Scheme: $SCHEME"
           
-          # Xcode Build (সঠিক প্রজেক্ট ফাইল ব্যবহার করে)
-          xcodebuild -scheme godot_ios -configuration Release -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO build
+          # বিল্ড করা
+          xcodebuild -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
 
-          # IPA Structure
+          # IPA তৈরি
           cd build/Release-iphoneos
           mkdir -p Payload
-          cp -r godot_ios.app Payload/
+          cp -r *.app Payload/
           zip -r GodotEditor_Master_Unsigned.ipa Payload/
 
       - name: Upload Unsigned IPA
