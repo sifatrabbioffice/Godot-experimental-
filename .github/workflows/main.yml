@@ -15,59 +15,53 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      # ১. মূল ডিরেক্টরিতে Godot-এর অফিশিয়াল কোড ক্লোন করা
+      # ১. Godot-এর অফিশিয়াল কোড (Master Branch) ক্লোন করা
       - name: Checkout Godot Master Branch
         uses: actions/checkout@v4
         with:
           repository: godotengine/godot
           ref: master
           submodules: recursive
-          fetch-depth: 1 # পেশাদার টিপ: মেমোরি ও সময় বাঁচাতে শুধু লেটেস্ট কমিট নেওয়া হচ্ছে
+          fetch-depth: 1
 
-      # ২. আপনার নিজস্ব রিপোজিটরি একটি সাব-ফোল্ডারে ক্লোন করা (অ্যাকশন স্ক্রিপ্টগুলোর জন্য)
-      - name: Checkout Custom Build Actions
-        uses: actions/checkout@v4
-        with:
-          path: my-actions # আপনার কোড এই ফোল্ডারে জমা হবে
-
-      # ৩. সাব-ফোল্ডার থেকে ক্যাশ রিস্টোর অ্যাকশন রান করা
+      # ২. ক্যাশ রিস্টোর (সরাসরি Godot-এর অফিশিয়াল রিপোজিটরি থেকে অ্যাকশন কল করা)
       - name: Restore Godot build cache
-        uses: ./my-actions/.github/actions/godot-cache-restore
+        uses: godotengine/godot/.github/actions/godot-cache-restore@master
         continue-on-error: true
 
-      # ৪. সাব-ফোল্ডার থেকে ডিপেন্ডেন্সি সেটআপ অ্যাকশন রান করা
+      # ৩. ডিপেন্ডেন্সি সেটআপ (Python এবং SCons ইন্সটল)
       - name: Setup Python and SCons
-        uses: ./my-actions/.github/actions/godot-deps
+        uses: godotengine/godot/.github/actions/godot-deps@master
 
-      # ৫. সাব-ফোল্ডারের বিল্ড স্ক্রিপ্ট ব্যবহার করে কম্পাইল করা
+      # ৪. Editor কম্পাইল করা (Godot-এর নিজস্ব বিল্ড স্ক্রিপ্ট ব্যবহার করে)
       - name: Compile editor (arm64)
-        uses: ./my-actions/.github/actions/godot-build
+        uses: godotengine/godot/.github/actions/godot-build@master
         with:
           scons-flags: ${{ env.SCONS_FLAGS }}
           platform: ios
           target: editor
 
-      # ৬. ক্যাশ সেভ করা
+      # ৫. পরবর্তী বিল্ড দ্রুত করার জন্য ক্যাশ সেভ করা
       - name: Save Godot build cache
-        uses: ./my-actions/.github/actions/godot-cache-save
+        uses: godotengine/godot/.github/actions/godot-cache-save@master
         continue-on-error: true
 
-      # ৭. Unsigned IPA প্যাকেজিং করা
+      # ৬. Xcode ব্যবহার করে Unsigned IPA তৈরি করা
       - name: Package Unsigned IPA
         run: |
           echo "Packaging the Compiled Framework into an Unsigned IPA..."
           
-          # Library Rename
+          # লাইব্রেরি রিনেম (যাতে Xcode এটি সহজে খুঁজে পায়)
           cd bin/
           EDITOR_LIB=$(ls libgodot.ios.editor.*.a | head -n 1)
           cp "$EDITOR_LIB" "libgodot.ios.template_release.arm64.a"
           cd ..
 
-          # File Sharing Permission Enable
+          # File Sharing পারমিশন চালু করা (প্রজেক্ট সেভ করার জন্য)
           plutil -replace UIFileSharingEnabled -bool YES misc/dist/ios_xcode/godot_ios/Info.plist
           plutil -replace LSSupportsOpeningDocumentsInPlace -bool YES misc/dist/ios_xcode/godot_ios/Info.plist
 
-          # Xcode Build without Code Signing
+          # কোড সাইনিং ছাড়া (No Certificate) Xcode বিল্ড
           cd misc/dist/ios_xcode
           xcodebuild -project godot_ios.xcodeproj \
             -target godot_ios \
@@ -77,13 +71,13 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-          # Create IPA Struct
+          # IPA ফোল্ডার স্ট্রাকচার তৈরি এবং জিপ করা
           cd build/Release-iphoneos
           mkdir Payload
           mv godot_ios.app Payload/
           zip -r GodotEditor_Master_Unsigned.ipa Payload/
 
-      # ৮. IPA ফাইলটি আর্টিফ্যাক্ট হিসেবে আপলোড করা
+      # ৭. তৈরি করা IPA ফাইলটি ডাউনলোড করার জন্য আপলোড করা
       - name: Upload Unsigned IPA Artifact
         uses: actions/upload-artifact@v4
         with:
