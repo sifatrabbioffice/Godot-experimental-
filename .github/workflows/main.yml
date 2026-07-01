@@ -21,18 +21,31 @@ jobs:
       - name: Compile Real Godot Engine for iOS
         run: |
           cd godot-source
-          # iPhone 15 Pro Max (A17 Pro) এর জন্য পিওর নেтивных ৬৪-বিট এডিটর কম্পাইল করা হচ্ছে
+          # iPhone 15 Pro Max (A17 Pro) এর জন্য নেটিভ স্ট্যাটিক লাইব্রেরি কম্পাইল করা হচ্ছে
           scons platform=ios target=editor arch=arm64 precision=single -j$(sysctl -n hw.ncpu)
 
-      - name: Create Real iOS App Bundle Structure
+      - name: Create iOS App Bundle Structure
         run: |
           mkdir -p build_stage/GodotEditor.app
 
-      - name: Inject Engine Binary into App Bundle
+      - name: Link Static Library into Real iOS Executable
         run: |
-          # SCons এর তৈরি করা আসল ১৬০+ মেগাবাইটের বাইনারি ফাইলটি অ্যাপ বান্ডেলের মেইন এক্সিকিউটেবল হিসেবে কপি করা হচ্ছে
-          # কোনো ওভাররাইট ছাড়া সরাসরি মূল ফাইলটিকে স্থানান্তর করা হচ্ছে
-          cp godot-source/bin/godot.ios.editor.arm64 build_stage/GodotEditor.app/GodotEditor
+          # বিল্ড ফোল্ডারে কি কি ফাইল তৈরি হয়েছে তা দেখার জন্য (Debugging)
+          ls -la godot-source/bin/
+          
+          # অ্যাপলের নেটিভ লিঙ্কার (clang++) ব্যবহার করে .a ফাইলটিকে আইফোনের ফ্রেমওয়ার্কের সাথে জোড়া হচ্ছে
+          xcrun --sdk iphoneos clang++ -target arm64-apple-ios17.0 \
+            -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+            godot-source/bin/*.a \
+            -framework UIKit -framework Foundation -framework Metal -framework MetalKit \
+            -framework CoreGraphics -framework QuartzCore -framework AudioToolbox \
+            -framework AVFoundation -framework CoreAudio -framework CoreMIDI \
+            -framework CoreMotion -framework GameController -framework Security \
+            -framework CoreVideo -framework IOKit \
+            -lc++ -lz \
+            -o build_stage/GodotEditor.app/GodotEditor
+
+          # এক্সিকিউটেবল পারমিশন দেওয়া হচ্ছে
           chmod +x build_stage/GodotEditor.app/GodotEditor
 
       - name: Generate High-Performance Info.plist
@@ -58,14 +71,10 @@ jobs:
               <true/>
               <key>MinimumOSVersion</key>
               <string>17.0</string>
-              
-              <!-- আইফোনের 'Files' অ্যাপের সাথে সরাসরি কানেক্ট করার মূল চাবিকাঠি -->
               <key>UIFileSharingEnabled</key>
               <true/>
               <key>LSSupportsOpeningDocumentsInPlace</key>
               <true/>
-              
-              <!-- এডিটরটি যেন আইফোনে ল্যান্ডস্কেপ মোডে সুন্দরভাবে চলে -->
               <key>UISupportedInterfaceOrientations</key>
               <array>
                   <string>UIInterfaceOrientationLandscapeLeft</string>
@@ -85,10 +94,10 @@ jobs:
           mkdir -p Payload
           mv build_stage/GodotEditor.app Payload/
           
-          # এড-হক সিগনেচার দিয়ে আইফোনে চলার উপযোগী করা হচ্ছে
+          # অ্যাড-হক ডিজিটাল সিগনেচার করা হচ্ছে
           codesign --force --deep --sign - Payload/GodotEditor.app
           
-          # জিপ করে আসল মেগাবাইটের আইপিএ ফাইল তৈরি
+          # ফাইনাল আইপিএ প্যাকেজিং
           zip -r Godot4.7_Native_iPhone15ProMax.ipa Payload/
 
       - name: Upload Complete Engine IPA
