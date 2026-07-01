@@ -1,10 +1,10 @@
-name: 📱 Build Native Godot 4.7 iOS Editor (iPhone 15 Pro Max)
+name: 🧪 Build PURE Native Godot 4.7 iOS Editor
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-native-ios-editor:
+  build-godot-native-ios:
     runs-on: macos-15
     steps:
       - name: Checkout Godot Source Code
@@ -18,183 +18,81 @@ jobs:
         run: |
           python3 -m pip install scons --break-system-packages
 
-      - name: Compile Godot Native iOS Editor
+      - name: Compile Real Godot Engine for iOS
         run: |
           cd godot-source
-          # iPhone 15 Pro Max এর A17 Pro চিপের জন্য (arm64) নেটিভ কম্পাইলেশন
-          # 'target=editor' দিয়ে এডিটর টুলস এনাবল করা হচ্ছে
+          # iPhone 15 Pro Max (A17 Pro) এর জন্য পিওর নেтивных ৬৪-বিট এডিটর কম্পাইল করা হচ্ছে
           scons platform=ios target=editor arch=arm64 precision=single -j$(sysctl -n hw.ncpu)
 
-      - name: Setup Directory Structure for iOS App
+      - name: Create Real iOS App Bundle Structure
         run: |
-          mkdir -p build_stage/GodotNative.app
-          # গডটের কম্পাইল করা স্ট্যাটিক লাইব্রেরি বা এক্সিকিউটেবল কপি করা হচ্ছে
-          # (Godot iOS-এ সাধারণত .a ফাইল তৈরি করে যা পরে সুইফটের সাথে লিংক করতে হয়)
-          cp godot-source/bin/godot.ios.editor.arm64 build_stage/GodotNative.app/GodotNative || true
+          mkdir -p build_stage/GodotEditor.app
 
-      - name: Generate SwiftUI Launcher & File Picker (UI Code)
+      - name: Inject Engine Binary into App Bundle
         run: |
-          cat << 'EOF' > build_stage/App.swift
-          import SwiftUI
-          import UniformTypeIdentifiers
+          # SCons এর তৈরি করা আসল ১৬০+ মেগাবাইটের বাইনারি ফাইলটি অ্যাপ বান্ডেলের মেইন এক্সিকিউটেবল হিসেবে কপি করা হচ্ছে
+          # কোনো ওভাররাইট ছাড়া সরাসরি মূল ফাইলটিকে স্থানান্তর করা হচ্ছে
+          cp godot-source/bin/godot.ios.editor.arm64 build_stage/GodotEditor.app/GodotEditor
+          chmod +x build_stage/GodotEditor.app/GodotEditor
 
-          @main
-          struct GodotNativeApp: App {
-              var body: some Scene {
-                  WindowGroup {
-                      ProjectLauncher()
-                  }
-              }
-          }
-
-          struct ProjectLauncher: View {
-              @State private var isImporterPresented = false
-              @State private var projectPath: String = "No Project Selected"
-              @State private var launchEngine = false
-
-              var body: some View {
-                  NavigationView {
-                      VStack(spacing: 30) {
-                          Image(systemName: "cube.transparent.fill")
-                              .resizable()
-                              .frame(width: 100, height: 100)
-                              .foregroundColor(.blue)
-                          
-                          Text("Godot 4.7 Native")
-                              .font(.system(size: 34, weight: .heavy, design: .rounded))
-                          
-                          Text("iPhone 15 Pro Max Edition")
-                              .font(.headline)
-                              .foregroundColor(.gray)
-
-                          Text("Selected Path:\n\(projectPath)")
-                              .multilineTextAlignment(.center)
-                              .padding()
-                              .background(Color.gray.opacity(0.1))
-                              .cornerRadius(10)
-                              .padding(.horizontal)
-
-                          Button(action: { isImporterPresented = true }) {
-                              Label("Select Project Folder", systemImage: "folder.badge.plus")
-                                  .font(.title2.bold())
-                                  .foregroundColor(.white)
-                                  .padding()
-                                  .frame(maxWidth: .infinity)
-                                  .background(Color.blue)
-                                  .cornerRadius(15)
-                          }
-                          .padding(.horizontal, 40)
-
-                          if projectPath != "No Project Selected" {
-                              Button(action: { launchEngine = true }) {
-                                  Label("Launch Editor", systemImage: "play.fill")
-                                      .font(.title2.bold())
-                                      .foregroundColor(.white)
-                                      .padding()
-                                      .frame(maxWidth: .infinity)
-                                      .background(Color.green)
-                                      .cornerRadius(15)
-                              }
-                              .padding(.horizontal, 40)
-                          }
-                      }
-                      .fileImporter(
-                          isPresented: $isImporterPresented,
-                          allowedContentTypes: [.folder],
-                          allowsMultipleSelection: false
-                      ) { result in
-                          do {
-                              guard let selectedURL = try result.get().first else { return }
-                              // iOS File System-এ সিকিউর অ্যাক্সেস নেওয়া হচ্ছে
-                              if selectedURL.startAccessingSecurityScopedResource() {
-                                  projectPath = selectedURL.path
-                                  // গডট ইঞ্জিনকে এই পাথ চিনিয়ে দেওয়ার লজিক এখানে কল হবে
-                              }
-                          } catch {
-                              print("Error selecting folder: \(error.localizedDescription)")
-                          }
-                      }
-                      .fullScreenCover(isPresented: $launchEngine) {
-                          GodotEngineView(workingDirectory: projectPath)
-                              .ignoresSafeArea()
-                      }
-                  }
-              }
-          }
-
-          // Godot C++ Engine এর সাথে ভিউ কানেক্ট করার ডামি রিপ্রেজেন্টেশন
-          struct GodotEngineView: UIViewControllerRepresentable {
-              let workingDirectory: String
-              
-              func makeUIViewController(context: Context) -> UIViewController {
-                  let vc = UIViewController()
-                  vc.view.backgroundColor = .black
-                  
-                  // এখানে গডটের নেটিভ C++ মেইন লুপ কল করতে হয়
-                  // উদাহরণ: Godot_Main(workingDirectory)
-                  
-                  let label = UILabel()
-                  label.text = "Loading Engine at:\n\(workingDirectory)"
-                  label.textColor = .green
-                  label.numberOfLines = 0
-                  label.textAlignment = .center
-                  label.frame = vc.view.bounds
-                  vc.view.addSubview(label)
-                  
-                  return vc
-              }
-              
-              func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
-          }
-          EOF
-
-      - name: Generate Info.plist for iPhone 15 Pro Max
+      - name: Generate High-Performance Info.plist
         run: |
-          cat << 'EOF' > build_stage/GodotNative.app/Info.plist
+          cat << 'EOF' > build_stage/GodotEditor.app/Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
               <key>CFBundleExecutable</key>
-              <string>GodotNative</string>
+              <string>GodotEditor</string>
               <key>CFBundleIdentifier</key>
-              <string>org.godotengine.nativeios</string>
+              <string>org.godotengine.officialnativeeditor</string>
               <key>CFBundleName</key>
-              <string>GodotNative</string>
-              <key>CFBundleSupportedPlatforms</key>
-              <array>
-                  <string>iPhoneOS</string>
-              </array>
+              <string>Godot</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>4.7</string>
+              <key>CFBundleVersion</key>
+              <string>1.0</string>
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
               <key>MinimumOSVersion</key>
-              <string>17.0</string> <key>UIFileSharingEnabled</key>
+              <string>17.0</string>
+              
+              <!-- আইফোনের 'Files' অ্যাপের সাথে সরাসরি কানেক্ট করার মূল চাবিকাঠি -->
+              <key>UIFileSharingEnabled</key>
               <true/>
               <key>LSSupportsOpeningDocumentsInPlace</key>
               <true/>
+              
+              <!-- এডিটরটি যেন আইফোনে ল্যান্ডস্কেপ মোডে সুন্দরভাবে চলে -->
+              <key>UISupportedInterfaceOrientations</key>
+              <array>
+                  <string>UIInterfaceOrientationLandscapeLeft</string>
+                  <string>UIInterfaceOrientationLandscapeRight</string>
+              </array>
               <key>UIRequiredDeviceCapabilities</key>
               <array>
                   <string>arm64</string>
-                  <string>metal</string> </array>
+                  <string>metal</string>
+              </array>
           </dict>
           </plist>
           EOF
 
-      - name: Compile Swift UI and Link Engine
-        run: |
-          # SwiftUI কোডটিকে কম্পাইল করে গডটের নেটিভ বাইনারির সাথে রিপ্লেস করা হচ্ছে
-          xcrun --sdk iphoneos swiftc -target arm64-apple-ios17.0 -O -parse-as-library \
-            build_stage/App.swift -o build_stage/GodotNative.app/GodotNative
-            
-          chmod +x build_stage/GodotNative.app/GodotNative
-
-      - name: Package IPA
+      - name: Sign and Package Absolute Real IPA
         run: |
           mkdir -p Payload
-          mv build_stage/GodotNative.app Payload/
-          codesign --force --deep --sign - Payload/GodotNative.app
-          zip -r Godot4.7_iPhone15ProMax.ipa Payload/
+          mv build_stage/GodotEditor.app Payload/
+          
+          # এড-হক সিগনেচার দিয়ে আইফোনে চলার উপযোগী করা হচ্ছে
+          codesign --force --deep --sign - Payload/GodotEditor.app
+          
+          # জিপ করে আসল মেগাবাইটের আইপিএ ফাইল তৈরি
+          zip -r Godot4.7_Native_iPhone15ProMax.ipa Payload/
 
-      - name: Upload IPA Artifact
+      - name: Upload Complete Engine IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Godot-Native-iPhone15ProMax
-          path: Godot4.7_iPhone15ProMax.ipa
+          name: godot-4.7-pure-native-ipa
+          path: Godot4.7_Native_iPhone15ProMax.ipa
