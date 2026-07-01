@@ -11,17 +11,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: godotengine/godot
-          ref: master  # আপনি চাইলে এখানে ৪.৭ বা নির্দিষ্ট রিলিজ ব্রাঞ্চ দিতে পারেন
+          ref: master
           path: godot-source
 
       - name: Setup Python and SCons
         run: |
-          python3 -m pip install scons
+          # --break-system-packages ফ্ল্যাগ যুক্ত করে ম্যাকওএসের পাইথন ব্লকার বাইপাস করা হয়েছে
+          python3 -m pip install scons --break-system-packages
 
       - name: Setup Emscripten (emsdk)
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.64  # গডোট মাস্টার ব্রাঞ্চের জন্য অত্যন্ত স্থিতিশীল একটি সংস্করণ
+          version: 3.1.64
           actions-cache-folder: 'emsdk-cache'
 
       - name: Verify Emscripten Compiler
@@ -31,8 +32,7 @@ jobs:
       - name: Compile Godot Web Editor from Source
         run: |
           cd godot-source
-          # -j$(sysctl -n hw.ncpu) দিয়ে ম্যাকওএসের সবগুলো কোর ব্যবহার করে দ্রুত বিল্ড করা হচ্ছে
-          # production=yes কোড অপ্টিমাইজ করে সাইজ ছোট করে এবং সিম্বল স্ট্রিপ করে
+          # সিঙ্গেল-থ্রেডেড এবং প্রোডাকশন অপ্টিমাইজড ওয়েব বিল্ড রান করা হচ্ছে
           scons platform=web target=editor threads=no production=yes -j$(sysctl -n hw.ncpu)
 
       - name: Setup Directory Structure for iOS App
@@ -41,8 +41,6 @@ jobs:
 
       - name: Process and Rename Compiled Assets
         run: |
-          # সোর্স বিল্ডের পর ফাইলগুলো godot-source/bin/ ফোল্ডারে জমা হয়
-          # আমরা ওয়াইল্ডকার্ড (*) ব্যবহার করে সেগুলোকে আমাদের কাঙ্ক্ষিত নামে স্থানান্তর করছি
           cd godot-source/bin
           mv *.html ../../build_stage/GodotWeb.app/godot_web/godot.editor.html
           mv *.js ../../build_stage/GodotWeb.app/godot_web/godot.editor.js
@@ -137,7 +135,6 @@ jobs:
 
       - name: Compile Swift App and Package IPA
         run: |
-          # সঠিক iOS SDK লিংক করে অ্যাপ বাইনারি তৈরি
           xcrun --sdk iphoneos swiftc -target arm64-apple-ios15.0 -O -parse-as-library \
             build_stage/App.swift -o build_stage/GodotWeb.app/GodotWeb
             
@@ -146,7 +143,7 @@ jobs:
           mkdir -p Payload
           mv build_stage/GodotWeb.app Payload/
           
-          # Ad-hoc কোড সাইনিং রানটাইম ক্র্যাশ এড়াতে
+          # ডিভাইসে ক্র্যাশ এড়াতে Ad-hoc সাইনিং করা হয়েছে
           codesign --force --deep --sign - Payload/GodotWeb.app
           
           zip -r GodotMasterOffline.ipa Payload/
