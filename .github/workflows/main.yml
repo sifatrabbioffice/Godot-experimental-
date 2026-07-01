@@ -11,7 +11,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: godotengine/godot
-          # Purono master branch-er poriborte 4.7 branch select kora hoyeche
           ref: '4.7'
           path: godot-source
 
@@ -39,12 +38,13 @@ jobs:
         run: |
           mkdir -p build_stage/GodotWeb.app/godot_web
 
-      - name: Process and Rename Compiled Assets
+      - name: Process and Move Compiled Assets
         run: |
           cd godot-source/bin
-          mv *.html ../../build_stage/GodotWeb.app/godot_web/godot.editor.html
-          mv *.js ../../build_stage/GodotWeb.app/godot_web/godot.editor.js
-          mv *.wasm ../../build_stage/GodotWeb.app/godot_web/godot.editor.wasm
+          # ১টি মাত্র HTML ফাইলকে স্ট্যান্ডার্ড index.html নামে রিনেম করে সরানো হচ্ছে
+          mv *.html ../../build_stage/GodotWeb.app/godot_web/index.html
+          # বাকি সব ফাইল (.js, .wasm, audio worklet) তাদের অরিজিনাল নামে সরানো হচ্ছে (কোনো নাম পরিবর্তন ছাড়া)
+          mv * ../../build_stage/GodotWeb.app/godot_web/
 
       - name: Generate High-Performance Swift Wrapper
         run: |
@@ -61,8 +61,9 @@ jobs:
 
           class LocalSchemeHandler: NSObject, WKURLSchemeHandler {
               func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
-                  let path = urlSchemeTask.request.url?.path ?? "/godot.editor.html"
-                  let fileName = path == "/" ? "/godot.editor.html" : path
+                  // এন্ট্রি পয়েন্ট এখন index.html হিসেবে ডিটেক্ট হবে
+                  let path = urlSchemeTask.request.url?.path ?? "/index.html"
+                  let fileName = path == "/" ? "/index.html" : path
                   let bundlePath = Bundle.main.bundlePath + "/godot_web" + fileName
                   
                   if let data = try? Data(contentsOf: URL(fileURLWithPath: bundlePath)) {
@@ -100,8 +101,9 @@ jobs:
                   config.setURLSchemeHandler(LocalSchemeHandler(), forURLScheme: "godot")
                   config.defaultWebpagePreferences.allowsContentJavaScript = true
                   
+                  // এন্ট্রি পয়েন্ট হিসেবে index.html লোড করা হচ্ছে
                   let webView = WKWebView(frame: .zero, configuration: config)
-                  webView.load(URLRequest(url: URL(string: "godot://local/godot.editor.html")!))
+                  webView.load(URLRequest(url: URL(string: "godot://local/index.html")!))
                   return webView
               }
               func updateUIView(_ uiView: WKWebView, context: Context) {}
@@ -143,7 +145,6 @@ jobs:
           mkdir -p Payload
           mv build_stage/GodotWeb.app Payload/
           
-          # iOS-e runtime crash eoranor jonno Ad-hoc signing
           codesign --force --deep --sign - Payload/GodotWeb.app
           
           zip -r Godot4.7Offline.ipa Payload/
