@@ -1,26 +1,54 @@
-name: 🧪 Build Optimized Offline Godot 4.7 Editor
+name: 🧪 Build Custom Godot Master Offline Editor
+
 on:
   workflow_dispatch:
 
 jobs:
-  build-optimized-editor:
+  build-godot-from-source:
     runs-on: macos-15
     steps:
-      - name: Setup Directory Structure
+      - name: Checkout Godot Source Code
+        uses: actions/checkout@v4
+        with:
+          repository: godotengine/godot
+          ref: master  # আপনি চাইলে এখানে ৪.৭ বা নির্দিষ্ট রিলিজ ব্রাঞ্চ দিতে পারেন
+          path: godot-source
+
+      - name: Setup Python and SCons
+        run: |
+          python3 -m pip install scons
+
+      - name: Setup Emscripten (emsdk)
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64  # গডোট মাস্টার ব্রাঞ্চের জন্য অত্যন্ত স্থিতিশীল একটি সংস্করণ
+          actions-cache-folder: 'emsdk-cache'
+
+      - name: Verify Emscripten Compiler
+        run: |
+          emcc -v
+
+      - name: Compile Godot Web Editor from Source
+        run: |
+          cd godot-source
+          # -j$(sysctl -n hw.ncpu) দিয়ে ম্যাকওএসের সবগুলো কোর ব্যবহার করে দ্রুত বিল্ড করা হচ্ছে
+          # production=yes কোড অপ্টিমাইজ করে সাইজ ছোট করে এবং সিম্বল স্ট্রিপ করে
+          scons platform=web target=editor threads=no production=yes -j$(sysctl -n hw.ncpu)
+
+      - name: Setup Directory Structure for iOS App
         run: |
           mkdir -p build_stage/GodotWeb.app/godot_web
 
-      - name: Download 4.7 Master Assets
+      - name: Process and Rename Compiled Assets
         run: |
-          cd build_stage/GodotWeb.app/godot_web
-          # ৪.৭ সংস্করণের জন্য প্রয়োজনীয় সকল ফাইল
-          BASE="https://editor.godotengine.org/releases/4.7.stable"
-          curl -L -fO "$BASE/godot.editor.html"
-          curl -L -fO "$BASE/godot.editor.js"
-          curl -L -fO "$BASE/godot.editor.wasm"
-          curl -L -fO "$BASE/godot.editor.worker.js" || true
+          # সোর্স বিল্ডের পর ফাইলগুলো godot-source/bin/ ফোল্ডারে জমা হয়
+          # আমরা ওয়াইল্ডকার্ড (*) ব্যবহার করে সেগুলোকে আমাদের কাঙ্ক্ষিত নামে স্থানান্তর করছি
+          cd godot-source/bin
+          mv *.html ../../build_stage/GodotWeb.app/godot_web/godot.editor.html
+          mv *.js ../../build_stage/GodotWeb.app/godot_web/godot.editor.js
+          mv *.wasm ../../build_stage/GodotWeb.app/godot_web/godot.editor.wasm
 
-      - name: Generate High-Performance Swift
+      - name: Generate High-Performance Swift Wrapper
         run: |
           cat << 'EOF' > build_stage/App.swift
           import SwiftUI
@@ -40,8 +68,17 @@ jobs:
                   let bundlePath = Bundle.main.bundlePath + "/godot_web" + fileName
                   
                   if let data = try? Data(contentsOf: URL(fileURLWithPath: bundlePath)) {
+                      let contentType: String
+                      if fileName.hasSuffix(".wasm") {
+                          contentType = "application/wasm"
+                      } else if fileName.hasSuffix(".js") {
+                          contentType = "application/javascript"
+                      } else {
+                          contentType = "text/html"
+                      }
+
                       let headers = [
-                          "Content-Type": fileName.hasSuffix(".wasm") ? "application/wasm" : "text/html",
+                          "Content-Type": contentType,
                           "Cross-Origin-Opener-Policy": "same-origin",
                           "Cross-Origin-Embedder-Policy": "require-corp",
                           "Access-Control-Allow-Origin": "*"
@@ -49,6 +86,10 @@ jobs:
                       let response = HTTPURLResponse(url: urlSchemeTask.request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: headers)!
                       urlSchemeTask.didReceive(response)
                       urlSchemeTask.didReceive(data)
+                      urlSchemeTask.didFinish()
+                  } else {
+                      let response = HTTPURLResponse(url: urlSchemeTask.request.url!, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil)!
+                      urlSchemeTask.didReceive(response)
                       urlSchemeTask.didFinish()
                   }
               }
@@ -82,27 +123,36 @@ jobs:
               <string>org.godotengine.offline</string>
               <key>CFBundleName</key>
               <string>GodotWeb</string>
+              <key>CFBundleSupportedPlatforms</key>
+              <array>
+                  <string>iPhoneOS</string>
+              </array>
+              <key>MinimumOSVersion</key>
+              <string>15.0</string>
               <key>UIFileSharingEnabled</key>
               <true/>
           </dict>
           </plist>
           EOF
 
-      - name: Compile and Package
+      - name: Compile Swift App and Package IPA
         run: |
-          SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos)
-          # -parse-as-library এবং -O ফ্ল্যাগ ব্যবহার করা হয়েছে
-          swiftc -target arm64-apple-ios15.0 -sdk "$SDK_PATH" -O -parse-as-library \
+          # সঠিক iOS SDK লিংক করে অ্যাপ বাইনারি তৈরি
+          xcrun --sdk iphoneos swiftc -target arm64-apple-ios15.0 -O -parse-as-library \
             build_stage/App.swift -o build_stage/GodotWeb.app/GodotWeb
             
           chmod +x build_stage/GodotWeb.app/GodotWeb
           
           mkdir -p Payload
           mv build_stage/GodotWeb.app Payload/
-          zip -r GodotOffline_4.7.ipa Payload/
+          
+          # Ad-hoc কোড সাইনিং রানটাইম ক্র্যাশ এড়াতে
+          codesign --force --deep --sign - Payload/GodotWeb.app
+          
+          zip -r GodotMasterOffline.ipa Payload/
 
-      - name: Upload Artifact
+      - name: Upload Custom Editor IPA
         uses: actions/upload-artifact@v4
         with:
-          name: godot-ios-offline-ipa
-          path: GodotOffline_4.7.ipa
+          name: godot-master-source-ipa
+          path: GodotMasterOffline.ipa
