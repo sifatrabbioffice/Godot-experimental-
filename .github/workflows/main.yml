@@ -1,39 +1,35 @@
-name: 📱 Complete iOS .app & .ipa Compiler for Godot 4.7
+name: 🧪 Build Experimental Godot 4.7 iOS Master Editor
 
 on:
   workflow_dispatch:
 
 jobs:
-  compile-and-package-ipa:
+  build-experimental-master-editor:
     runs-on: macos-15
     steps:
-      - name: Checkout Godot Source
+      - name: Checkout Godot Source Code
         uses: actions/checkout@v4
         with:
           repository: godotengine/godot
           ref: '4.7'
           path: godot-source
 
-      - name: Setup Build Environment
+      - name: Setup Python and SCons
         run: |
           python3 -m pip install scons --break-system-packages
 
-      - name: Compile Godot Engine for iOS (A17 Pro/arm64)
+      - name: Compile Godot Core Engine with Full Editor Tools
         run: |
           cd godot-source
-          # SCons দিয়ে আইফোনের জন্য কোর ইঞ্জিন স্ট্যাটিক লাইব্রেরি (.a) কম্পাইল করা হচ্ছে
+          # 'target=editor' দিয়ে সম্পূর্ণ গডট ইঞ্জিন ও প্রজেক্ট ম্যানেজারকে আইফোনের আর্কিটেকচারে কম্পাইল করা হচ্ছে
           scons platform=ios target=editor arch=arm64 precision=single -j$(sysctl -n hw.ncpu)
 
-      - name: Create Structure, Link Components and Build .app Bundle
+      - name: Create Structure and Link Master Binary
         run: |
-          # ১. iOS এর অফিশিয়াল নিয়ম অনুযায়ী Payload/ অ্যাপ ফোল্ডার তৈরি
-          mkdir -p Payload/GodotEditor.app
-          
-          # ২. অ্যাপলের Xcode SDK পাথ লোড করা
+          mkdir -p Payload/GodotMaster.app
           SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
           
-          echo "=== স্ট্যাটিক লাইব্রেরিগুলোকে লিংক করে রানযোগ্য এক্সিকিউটেবল তৈরি করা হচ্ছে ==="
-          # ৩. clang++ লিঙ্কার ব্যবহার করে SCons এর তৈরি ফাইলগুলোকে আইফোনের ফ্রেমওয়ার্কের সাথে জোড়া হচ্ছে
+          # clang++ লিঙ্কারের মাধ্যমে গডটের সমস্ত সোর্স ফাইলকে আইফোনের কোর ফ্রেমওয়ার্কের সাথে যুক্ত করা হচ্ছে
           xcrun --sdk iphoneos clang++ -target arm64-apple-ios17.0 \
             -isysroot "$SDK_PATH" \
             godot-source/bin/*.a \
@@ -43,25 +39,24 @@ jobs:
             -framework CoreMotion -framework GameController -framework Security \
             -framework CoreVideo -framework IOKit -framework OpenGLES \
             -lc++ -lz \
-            -o Payload/GodotEditor.app/GodotEditor
+            -o Payload/GodotMaster.app/GodotMaster
 
-          # ৪. মেইন এক্সিকিউটেবল ফাইলটিকে সিস্টেমে রান করার অনুমতি (Execution Permission) দেওয়া
-          chmod +x Payload/GodotEditor.app/GodotEditor
+          chmod +x Payload/GodotMaster.app/GodotMaster
 
-      - name: Inject Configuration (Info.plist) into .app
+      - name: Generate Unrestricted Info.plist (Document Browser Mode)
         run: |
-          # ৫. .app বান্ডেলের ভেতরে অ্যাপের পরিচয়পত্র বা Info.plist ফাইল তৈরি করা
-          cat << 'EOF' > Payload/GodotEditor.app/Info.plist
+          # এই প্লাইস্ট ফাইলটি আইফোনের ফাইল সিস্টেমের লকডাউন ভেঙে দেয়
+          cat << 'EOF' > Payload/GodotMaster.app/Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
               <key>CFBundleExecutable</key>
-              <string>GodotEditor</string>
+              <string>GodotMaster</string>
               <key>CFBundleIdentifier</key>
-              <string>org.godotengine.ioseditor</string>
+              <string>org.godotengine.experimental.mastereditor</string>
               <key>CFBundleName</key>
-              <string>Godot 4.7</string>
+              <string>Godot Master</string>
               <key>CFBundlePackageType</key>
               <string>APPL</string>
               <key>CFBundleShortVersionString</key>
@@ -72,10 +67,20 @@ jobs:
               <true/>
               <key>MinimumOSVersion</key>
               <string>17.0</string>
+              
+              <key>UISupportsDocumentBrowser</key>
+              <true/>
+              
               <key>UIFileSharingEnabled</key>
               <true/>
               <key>LSSupportsOpeningDocumentsInPlace</key>
               <true/>
+              
+              <key>NSDocumentsFolderUsageDescription</key>
+              <string>Godot Editor requires access to your local files to load and save game projects.</string>
+              <key>NSCloudKitContainerEnvironment</key>
+              <string>Development</string>
+              
               <key>UISupportedInterfaceOrientations</key>
               <array>
                   <string>UIInterfaceOrientationLandscapeLeft</string>
@@ -90,20 +95,39 @@ jobs:
           </plist>
           EOF
 
-      - name: Apply Ad-Hoc Code Signature to .app
+      - name: Generate Master Entitlements (Bypass RAM & Debug Limits)
         run: |
-          # 🖥️ আইফোনের সিকিউরিটি সিস্টেম পাস করার জন্য অ্যাড-হক ডিজিটাল সাইনিং করা
-          echo "Signing the .app bundle..."
-          codesign --force --deep --sign - Payload/GodotEditor.app
+          # এই স্পেশাল ফাইলটি অ্যাপল ডিভাইসের হার্ডওয়্যার রেস্ট্রিকশন শিথিল করে
+          cat << 'EOF' > entitlements.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>get-task-allow</key>
+              <true/>
+              
+              <key>com.apple.developer.kernel.increased-memory-limit</key>
+              <true/>
+              
+              <key>com.apple.private.security.no-sandbox</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
 
-      - name: Compress and Package into Final .ipa
+      - name: Code Sign with Experimental Entitlements
         run: |
-          # 📦 Payload ফোল্ডারটিকে জিপ করে অফিশিয়াল .ipa ফাইলে রূপান্তর করা
-          echo "Packaging Payload into Godot_Editor_iPhone15ProMax.ipa..."
-          zip -r Godot_Editor_iPhone15ProMax.ipa Payload/
+          # তৈরি করা এন্টাইটেলমেন্টস সহ অ্যাপটিকে ফোর্স সাইন করা হচ্ছে
+          echo "Applying unrestricted entitlements..."
+          codesign --force --deep --sign - --entitlements entitlements.plist Payload/GodotMaster.app
 
-      - name: Upload Production Ready IPA Artifact
+      - name: Package into Master IPA
+        run: |
+          echo "Packaging into Final Experimental IPA..."
+          zip -r Godot4.7_Experimental_Master_iOS.ipa Payload/
+
+      - name: Upload Finished Master IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-pure-native-ipa
-          path: Godot_Editor_iPhone15ProMax.ipa
+          name: godot-master-unrestricted-ipa
+          path: Godot4.7_Experimental_Master_iOS.ipa
