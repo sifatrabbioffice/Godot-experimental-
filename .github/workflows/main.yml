@@ -1,11 +1,11 @@
-name: 🧪 Build PURE Native Godot 4.7 iOS Editor
+name: 🧪 Build and Package Godot 4.7 iOS Editor IPA
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # গিটহাব থেকে ম্যানুয়ালি রান করার জন্য
 
 jobs:
   build-godot-native-ios:
-    runs-on: macos-15
+    runs-on: macos-15 # অ্যাপলের লেটেস্ট SDK ব্যবহারের জন্য macOS ১৫ রানার
     steps:
       - name: Checkout Godot Source Code
         uses: actions/checkout@v4
@@ -18,24 +18,29 @@ jobs:
         run: |
           python3 -m pip install scons --break-system-packages
 
-      - name: Compile Real Godot Engine for iOS
+      - name: Compile Godot Static Library for iOS
         run: |
           cd godot-source
-          # iPhone 15 Pro Max (A17 Pro) এর জন্য নেটিভ স্ট্যাটিক লাইব্রেরি কম্পাইল করা হচ্ছে
+          # iPhone 15 Pro Max (arm64) এর জন্য গডটের মূল কোর ইঞ্জিন কম্পাইল করা হচ্ছে
           scons platform=ios target=editor arch=arm64 precision=single -j$(sysctl -n hw.ncpu)
 
-      - name: Create iOS App Bundle Structure
+      - name: Inspect Build Artifacts (Debugging)
         run: |
-          mkdir -p build_stage/GodotEditor.app
-
-      - name: Link Static Library into Real iOS Executable
-        run: |
-          # বিল্ড ফোল্ডারে কি কি ফাইল তৈরি হয়েছে তা দেখার জন্য (Debugging)
+          echo "=== SCons এর তৈরি করা ফাইলগুলো দেখা হচ্ছে ==="
           ls -la godot-source/bin/
+
+      - name: Create iOS Bundle Structure and Link Binary
+        run: |
+          # iOS এর স্ট্যান্ডার্ড অ্যাপ স্ট্রাকচার (Payload ফোল্ডার) তৈরি করা হচ্ছে
+          mkdir -p Payload/GodotEditor.app
           
-          # অ্যাপলের নেটিভ লিঙ্কার (clang++) ব্যবহার করে .a ফাইলটিকে আইফোনের ফ্রেমওয়ার্কের সাথে জোড়া হচ্ছে
+          # অ্যাপলের অফিসিয়াল SDK পাথ খুঁজে বের করা হচ্ছে
+          SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+          
+          echo "=== স্ট্যাটিক লাইব্রেরি থেকে নেটিভ আইফোন এক্সিকিউটেবল তৈরি করা হচ্ছে ==="
+          # clang++ ব্যবহার করে SCons এর .a ফাইলকে আইফোনের সিস্টেম ফ্রেমওয়ার্কের সাথে লিংক করা হচ্ছে
           xcrun --sdk iphoneos clang++ -target arm64-apple-ios17.0 \
-            -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+            -isysroot "$SDK_PATH" \
             godot-source/bin/*.a \
             -framework UIKit -framework Foundation -framework Metal -framework MetalKit \
             -framework CoreGraphics -framework QuartzCore -framework AudioToolbox \
@@ -43,14 +48,16 @@ jobs:
             -framework CoreMotion -framework GameController -framework Security \
             -framework CoreVideo -framework IOKit \
             -lc++ -lz \
-            -o build_stage/GodotEditor.app/GodotEditor
+            -o Payload/GodotEditor.app/GodotEditor
 
-          # এক্সিকিউটেবল পারমিশন দেওয়া হচ্ছে
-          chmod +x build_stage/GodotEditor.app/GodotEditor
+          # তৈরি হওয়া নেティブ এক্সিকিউটেবল ফাইলটিকে রান করার পারমিশন দেওয়া হচ্ছে
+          chmod +x Payload/GodotEditor.app/GodotEditor
+          echo "লিঙ্কিং সফলভাবে সম্পন্ন হয়েছে!"
 
-      - name: Generate High-Performance Info.plist
+      - name: Generate Native Info.plist
         run: |
-          cat << 'EOF' > build_stage/GodotEditor.app/Info.plist
+          # আইফোন যাতে অ্যাপটিকে চিনতে পারে এবং ফাইল ম্যানেজার অ্যাক্সেস দেয় তার জন্য Info.plist তৈরি
+          cat << 'EOF' > Payload/GodotEditor.app/Info.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -58,7 +65,7 @@ jobs:
               <key>CFBundleExecutable</key>
               <string>GodotEditor</string>
               <key>CFBundleIdentifier</key>
-              <string>org.godotengine.officialnativeeditor</string>
+              <string>org.godotengine.official.nativeeditor</string>
               <key>CFBundleName</key>
               <string>Godot</string>
               <key>CFBundlePackageType</key>
@@ -89,19 +96,20 @@ jobs:
           </plist>
           EOF
 
-      - name: Sign and Package Absolute Real IPA
+      - name: Ad-Hoc Digital Code Signing
         run: |
-          mkdir -p Payload
-          mv build_stage/GodotEditor.app Payload/
-          
-          # অ্যাড-হক ডিজিটাল সিগনেচার করা হচ্ছে
+          # অ্যাপলের codesign টুল ব্যবহার করে ফ্রি অ্যাড-হক সিগনেচার দেওয়া হচ্ছে
+          echo "Ad-hoc signing the app bundle..."
           codesign --force --deep --sign - Payload/GodotEditor.app
-          
-          # ফাইনাল আইপিএ প্যাকেজিং
-          zip -r Godot4.7_Native_iPhone15ProMax.ipa Payload/
 
-      - name: Upload Complete Engine IPA
+      - name: Compress Payload into Final IPA
+        run: |
+          # Payload ফোল্ডারটিকে জিপ করে .ipa ফাইলে রূপান্তর করা হচ্ছে
+          echo "Packaging into IPA..."
+          zip -r Godot4.7_Native_Editor.ipa Payload/
+
+      - name: Upload Finished IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-4.7-pure-native-ipa
-          path: Godot4.7_Native_iPhone15ProMax.ipa
+          name: godot-4.7-ios-editor-ipa
+          path: Godot4.7_Native_Editor.ipa
